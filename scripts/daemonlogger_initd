@@ -1,0 +1,68 @@
+#!/bin/sh
+#
+# chkconfig: - 94 34
+# description:  This shell script takes care of starting and stopping
+#               the daemonlogger
+### BEGIN INIT INFO
+# Provides: daemonlogger
+# Required-Start: $network
+# Default-Start: 3 5
+# Short Description: The daemon logger captures packets into a circular buffer of files
+# Description: Provides a named pipe for escalation events
+### END INIT INFO
+
+# Source function library
+. /etc/rc.d/init.d/functions
+. /etc/snort-info
+
+processname="daemonlogger"
+
+# remove this line if you want to capture the handshakes and certs exchange
+BPF=" not port 443 and not port 22 "
+
+INTF="eno3:eno4"
+
+# Handle manual control parameters like start, stop, status, restart, etc.
+
+case "$1" in
+  start)
+    # Start daemons.
+     echo -n "Starting $INTF daemonlogger daemon: "
+     /usr/sbin/daemonlogger -p /var/run/daemonlogger.pid -i $INTF -D /usr/local/lib/daq  -d -r -n daemonlogger.pcap  -g snort -l /dev/shm/ -t 5m -X -S 1518 -M 90 $BPF
+    RETVAL=$?
+    ;;
+
+  stop)
+    # Stop daemons.
+    echo -n $"Shutting down daemonlogger: "
+    	if [ -r /var/run/daemonlogger*.pid ]; then
+	        kill -9  `cat /var/run/daemonlogger*.pid`
+	        RETVAL=$?
+		rm -f /var/run/daemonlogger*.pid
+                killall /usr/sbin/daemonlogger
+	    	[ "$RETVAL" = 0 ] && success "stop" || failure "stop"
+	    else
+                killall /usr/sbin/daemonlogger
+	        success "already stopped"
+	        RETVAL=0
+	    fi
+    echo
+
+    # Do clean-up works here like removing pid files from /var/run, etc.
+    ;;
+  status)
+    status daemonlogger
+	RETVAL=$?
+    ;;
+  restart)
+    $0 stop
+    $0 start
+    ;;
+
+  *)
+    echo $"Usage: $0 {start|stop|status|restart}"
+    exit 1
+esac
+
+exit 0
+
