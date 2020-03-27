@@ -110,13 +110,16 @@
 #include <sys/queue.h>
 #include <sys/param.h>
 #include <sys/mount.h>
+#include <pthread.h>
 #include <daq.h>
+#include "sfdaq.h"
 
 #ifdef LINUX
 #include <sys/statvfs.h>
 #include <sys/vfs.h>
 #endif
 
+#define TDEBUG  0  // toggle issues debugging
 #define PKT_SNAPLEN  1514
 #define PKT_TIMEOUT  1000  // ms, worst daq resolution is 1 sec
 
@@ -210,7 +213,7 @@ static int filecount;
 static int aorb;   // current toggle file 'A' or 'B'
 static int toggle; // boolean 1=> use file toggling
 static int showver;
-static int datalink;
+//  static int datalink;
 static int shutdown_requested;
 static int restart_requested;
 static int ringbuffer;
@@ -271,6 +274,9 @@ static const char * daq_vars[]={NULL};   //  StringVector_
 static     char *daq_path;
 static     char *daq_filter;
 static     int er=0;
+static int dumpcallcount=0;
+static int timer_expiry=0;
+static int rollover_time=0;
 
 #ifdef LINUX
 #define d_statfs(p, s) statvfs(p, s)
@@ -298,7 +304,7 @@ static void fatal(const char *format, ...)
     else
     {
         fprintf(stderr, "ERROR: %s\n", buf);
-        fprintf(stderr,"Fatal Error, Quitting..\n");        
+         fprintf(stderr,"Fatal Error, Quitting..\n");        
     }
 
     va_end(ap);
@@ -471,7 +477,7 @@ static int go_daemon()
 
 static void dl_shutdown(int signal)
 {
-    msg("Quitting!");
+     msg("Quitting!");
     if(retrans_interface != NULL) 
     {
         eth_close(eth_retrans);
@@ -812,10 +818,10 @@ char *get_abs_path(char *dir)
 static int set_chroot(void)
 {
     char *absdir;
-    int abslen;
-    char *logdir;
+    //  int abslen;
+    //  char *logdir;  local scope of a global var?
     
-    logdir = get_abs_path(logpath);
+    //  logdir = get_abs_path(logpath);
 
     /* change to the directory */
     if(chdir(chroot_dir) != 0)
@@ -826,7 +832,7 @@ static int set_chroot(void)
 
     /* always returns an absolute pathname */
     absdir = getcwd(NULL, 0);
-    abslen = strlen(absdir);
+    // abslen = strlen(absdir);
     
     /* make the chroot call */
     if(chroot(absdir) < 0)
@@ -1127,7 +1133,7 @@ int DAQ_Delete(void)
 
 int DAQ_Start ()
 {
-  printf("DAQ_Start calling daq_start with arg=%d '0x%x'", daq_mod, daq_hand);
+  printf("DAQ_Start calling daq_start with arg=%d '0x%p'", daq_mod, daq_hand);
 
     int err = daq_start(daq_mod, daq_hand);
 
@@ -1188,7 +1194,7 @@ printf("Into DAQ_Acquire with max=%d\n", max);
 #endif
 printf("Leaving DAQ_Acquire \n");
 
-    if ( err != DAQ_READFILE_EOF ) {
+    if ( err == DAQ_READFILE_EOF ) {
         printf("DAQ_READFILE_EOF: %d\n%s\n", err,daq_get_error(daq_mod, daq_hand));
         }
     if ( err && err != DAQ_READFILE_EOF )
@@ -1204,18 +1210,20 @@ printf("Leaving DAQ_Acquire \n");
 }
 
 
-DAQ_Analysis_Func_t  DirectLogTcpdump(void* user,DAQ_PktHdr_t *ph, uint8_t *pkt)
+DAQ_Analysis_Func_t  DirectLogTcpdump(void* user,const DAQ_PktHdr_t *ph, const unsigned char *pkt)
 {
+   // gets called once per packet
+   dumpcallcount++;
    pcap_dump((u_char *)pdp,(struct pcap_pkthdr *) ph, pkt);
    return NULL;
 }
 
 static int start_sniffing()
 {
-    bpf_u_int32 localnet, netmask;         /* net addr holders */
-    struct bpf_program fcode;              /* Finite state machine holder */
+    //  bpf_u_int32 localnet, netmask;         /* net addr holders */
+    //  struct bpf_program fcode;              /* Finite state machine holder */
     char errorbuf[PCAP_ERRBUF_SIZE];       /* buffer to put error strings in */
-    bpf_u_int32 defaultnet = 0xFFFFFF00;    
+    //  bpf_u_int32 defaultnet = 0xFFFFFF00;    
 
     if(readback_mode == 0)
     {
@@ -1333,7 +1341,7 @@ static char *load_bpf_file(char *filename)
     /* strip comments and <CR>'s */
     while((comment = strchr(filebuf, '#')) != NULL)
     {
-        while(*comment != '\r' && *comment != '\n' && comment != '\0')
+        while(*comment != '\r' && *comment != '\n' && *comment != '\0')
         {
             *comment++ = ' ';
         }
@@ -1344,30 +1352,7 @@ static char *load_bpf_file(char *filename)
 
 void packet_dump(char *user, struct pcap_pkthdr *pkthdr, u_char *pkt)
 {
-    time_t now;
     
-    if(rollover)
-    {
-        now = time(NULL);
-        if(rollover_interval == 0)
-        {
-            if(lastroll + rollover < now)
-            {
-                msg("Rollover timer has expired!");
-                log_rollover();
-                lastroll = now;    
-            }            
-        }
-        else
-        {
-            if(now > nextroll)
-            {
-                msg("Rollover timer has expired!");
-                log_rollover();
-                set_rollover_time();
-            }
-        }
-    }
     
     if(shutdown_requested == 1)
         dl_shutdown(0);
@@ -1378,6 +1363,15 @@ void packet_dump(char *user, struct pcap_pkthdr *pkthdr, u_char *pkt)
     pcap_dump((u_char *) pdp, pkthdr, pkt);
     if(flush_flag)
         pcap_dump_flush(pdp);
+
+    if(timer_expiry==1)
+    {
+                msg("Rollover timer_expiry=1");
+                log_rollover();
+                set_rollover_time();
+                lastroll++;
+                timer_expiry=0;
+    }
         
     if(((size_t)ftello((FILE *) pdp)) > rollsize)
     {
@@ -1404,6 +1398,7 @@ void packet_retrans(char *user, struct pcap_pkthdr *pkthdr, u_char *pkt)
 
 static int sniff_loop()
 {
+  int irc = DAQ_SUCCESS;
     if(chroot_flag)
         set_chroot();
 
@@ -1423,10 +1418,12 @@ static int sniff_loop()
     lastroll = time(NULL);
  
         er=DAQ_Start(  ); /* handle is global static */
-        printf("DAQ_Start returned status %d\n", er);
-         DAQ_Acquire( 0, DirectLogTcpdump ,NULL)    ;  
-
-
+        printf("\nDAQ_Start returned status %d\n", er);
+        irc=0;
+        while ( irc == 0 ) { // because interfaces sometimes blink on VMs
+            irc = DAQ_Acquire( 0, packet_handler ,NULL)    ;  
+            printf("\nDAQ_Acquire ended with returned status %d\n", irc);
+        }
     return SUCCESS;
 }
 
@@ -1466,7 +1463,7 @@ char *copy_argv(char **argv)
     return buf;
 }
 
-static int set_rollover_time()
+static int set_rollover_time() // this should be reworked to use seconds for everything, IMO
 {
     time_t now;
     struct tm *curtime;
@@ -1528,6 +1525,27 @@ static void usage()
 
 extern char *optarg;
 extern int  optind, opterr, optopt;
+
+void rollover_timers(void* seconds)
+{
+time_t now, prevcheck, nextroll;
+sleep(20); //  20 seconds to get things started
+prevcheck=lastroll;
+while ( 1==1 ) {
+   now = time(NULL);
+   if ( TDEBUG )  msg("loop timer_expiry=%d prev=%lu last=%lu", timer_expiry, prevcheck, lastroll);
+   if(timer_expiry==0 && lastroll != prevcheck && nextroll < now)
+            {
+                msg("Rollover timer has expired!");
+                prevcheck=lastroll;
+                nextroll=now+rollover_time;
+                timer_expiry=1;
+            }            
+   sleep(10);
+   }
+
+}
+
 
 int parse_cmd_line(int argc, char *argv[])
 {
@@ -1654,29 +1672,40 @@ int parse_cmd_line(int argc, char *argv[])
             case 't':
                 if(isdigit((int)optarg[strlen(optarg)-1]))
                 {
-                     rollover = atoi(optarg); 
+                     rollover = atoi(optarg); //seconds
+		     rollover_time = rollover;
                 }
                 else
                 {
                     sscanf(optarg, "%d%c", &rollover, &rollmetric);
-                    
+ 		    rollover_time = rollover;
+                   
                     switch(tolower(rollmetric))
                     {
                         case 'm':
                             rollover_interval = MINUTES;
+			    rollover_time = 60*rollover;
                             break;
                         case 'h':
                             rollover_interval = HOURS;
-                            break;
+ 			    rollover_time = 3600*rollover;
+                           break;
                         case 'd':
                             rollover_interval = DAYS;
-                            break;
+ 			    rollover_time = 86400*rollover;
+                           break;
                         default:
                             fatal("Bad time interval argument \"%c\"\n", 
                                   rollmetric);
                             break;
                     }
                 }
+
+                // fork the time thread here
+                pthread_t timerthread;
+                pthread_create( &timerthread, NULL, rollover_timers, &rollover_time);
+    
+
                 break;
             case 'T':
                 chroot_dir = strdup(optarg);
@@ -1775,9 +1804,12 @@ int parse_cmd_line(int argc, char *argv[])
 int main(int argc, char *argv[])
 {   
     sigset_t set;
+ /* the packet handler can be 'packet_dump' which includes rollover, etc.
+ Or it can be DirectLogTcpdump which does nothing but dump the packets   */
     packet_handler = packet_dump;
+
     int statret;
-    d_statfs_t s;
+    d_statfs_t s; 
     daq_path=strdup("/usr/local/lib/daq/");
     daq_filter=strdup("afpacket");
 
