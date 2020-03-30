@@ -1,0 +1,14 @@
+[Unit]
+Description=Packet capture in shm ring buffers
+After=syslog.target
+
+[Service]
+EnvironmentFile=/etc/sysconfig/daemonlogger
+ExecStart=/usr/local/bin/daemonlogger -i $INTF $DAEMON $OPTIONS
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+
+
+[Install]
+WantedBy=multiuser.target
+
