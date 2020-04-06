@@ -10,6 +10,6 @@ fi
 gcc  -g -O2 -g -O0 -Wall   -ldnet -o daemonlogger daemonlogger.o -L/usr/local/lib/daq -lpcap  -lz -lpthread -ldaq -lsfbpf
 
 sudo /usr/bin/install -c daemonlogger "/usr/local/bin"
-
+sudo mkdir -p /usr/local/bin/etc
 sudo cp -p unit.daemonlogger /usr/lib/systemd/system/daemonlogger.service
-sudo cp -p daemonlogger.config /etc/sysconfig/daemonlogger 
+sudo cp -p daemonlogger.config /usr/local/etc/sysconfig/daemonlogger 

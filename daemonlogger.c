@@ -1528,7 +1528,7 @@ extern int  optind, opterr, optopt;
 
 void rollover_timers(void* seconds)
 {
-time_t now, prevcheck, nextroll;
+time_t now, prevcheck, nextroll=0;
 sleep(20); //  20 seconds to get things started
 prevcheck=lastroll;
 while ( 1==1 ) {
@@ -1701,9 +1701,8 @@ int parse_cmd_line(int argc, char *argv[])
                     }
                 }
 
-                // fork the time thread here
-                pthread_t timerthread;
-                pthread_create( &timerthread, NULL, rollover_timers, &rollover_time);
+                // we can't fork the time thread here because when it goes daemon which process will be lost.  We will look for a non-zero rollover value in the daemon fork child.
+ 
     
 
                 break;
@@ -1892,6 +1891,12 @@ int main(int argc, char *argv[])
         go_daemon();
     }
     
+    if ( rollover != 0) 
+    {
+        pthread_t timerthread;
+        pthread_create( &timerthread, NULL, rollover_timers, &rollover_time);
+    }
+
     start_sniffing();
     if (rollover_interval != 0) 
     {

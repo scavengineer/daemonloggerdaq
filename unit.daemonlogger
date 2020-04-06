@@ -3,7 +3,7 @@ Description=Packet capture in shm ring buffers
 After=syslog.target
 
 [Service]
-EnvironmentFile=/etc/sysconfig/daemonlogger
+EnvironmentFile=/usr/local/etc/sysconfig/daemonlogger
 ExecStart=/usr/local/bin/daemonlogger -i $INTF $DAEMON $OPTIONS
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=process
